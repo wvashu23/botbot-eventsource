@@ -103,8 +103,6 @@ func NewHub() *Hub {
 		log.Fatal("Could not read Redis string", err)
 	}
 
-	fmt.Println("####### redisURL ########")
-	fmt.Println(redisUrl)
 	redis_db, err := strconv.Atoi(strings.TrimLeft(redisUrl.Path, "/"))
 	if err != nil {
 		log.Fatal("Could not read Redis path", err)
@@ -125,19 +123,6 @@ func NewHub() *Hub {
 	// We use the second redis database for the pub/sub
 	//h.client.Db = 2
 	return &h
-}
-
-func RunMartini(m *martini.ClassicMartini) {
-	port := os.Getenv("SSE_PORT")
-	if port == "" {
-		port = "3000"
-	}
-
-	host := os.Getenv("SSE_HOST")
-
-	//	logger := m.Injector.Get(reflect.TypeOf(m.logger)).Interface().(*log.Logger)
-	log.Println("listening on " + host + ":" + port)
-	log.Fatalln(http.ListenAndServe(host+":"+port, m))
 }
 
 func main() {
@@ -167,5 +152,16 @@ func main() {
 			}
 		}
 	})
-	RunMartini(m)
+
+	sseString := os.Getenv("SSE_ENDPOINT_URL")
+	if sseString == "" {
+		log.Fatal("SSE_URL is not set, example: SSE_URL=http://localhost:3000/")
+	}
+	sseUrl, err := nurl.Parse(sseString)
+	if err != nil {
+		log.Fatal("Could not read SSE string", err)
+	}
+
+	log.Println("listening on " + sseUrl.Host)
+	log.Fatalln(http.ListenAndServe(sseUrl.Host, m))
 }
