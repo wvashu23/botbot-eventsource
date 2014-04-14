@@ -3,7 +3,13 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	nurl "net/url"
+	"os"
+	"strconv"
+	"strings"
+	// "reflect"
 
 	"github.com/codegangsta/martini"
 	"github.com/donovanhide/eventsource"
@@ -88,6 +94,22 @@ func (h *Hub) run() {
 }
 
 func NewHub() *Hub {
+	redisUrlString := os.Getenv("REDIS_SSEQUEUE_URL")
+	if redisUrlString == "" {
+		redisUrlString = "redis://localhost:6379/2"
+	}
+	redisUrl, err := nurl.Parse(redisUrlString)
+	if err != nil {
+		log.Fatal("Could not read Redis string", err)
+	}
+
+	fmt.Println("####### redisURL ########")
+	fmt.Println(redisUrl)
+	redis_db, err := strconv.Atoi(strings.TrimLeft(redisUrl.Path, "/"))
+	if err != nil {
+		log.Fatal("Could not read Redis path", err)
+	}
+
 	server := eventsource.NewServer()
 	server.AllowCORS = true
 
@@ -98,10 +120,24 @@ func NewHub() *Hub {
 		unregister: make(chan string, 0),
 		messages:   make(chan goredis.Message, 0),
 		srv:        server,
+		client:     goredis.Client{Addr: redisUrl.Host, Db: redis_db},
 	}
 	// We use the second redis database for the pub/sub
-	h.client.Db = 2
+	//h.client.Db = 2
 	return &h
+}
+
+func RunMartini(m *martini.ClassicMartini) {
+	port := os.Getenv("SSE_PORT")
+	if port == "" {
+		port = "3000"
+	}
+
+	host := os.Getenv("SSE_HOST")
+
+	//	logger := m.Injector.Get(reflect.TypeOf(m.logger)).Interface().(*log.Logger)
+	log.Println("listening on " + host + ":" + port)
+	log.Fatalln(http.ListenAndServe(host+":"+port, m))
 }
 
 func main() {
@@ -109,6 +145,7 @@ func main() {
 	go h.run()
 
 	m := martini.Classic()
+
 	// eventsource endpoints
 	m.Get("/push/:token", func(w http.ResponseWriter, req *http.Request, params martini.Params) {
 		token := params["token"]
@@ -130,6 +167,5 @@ func main() {
 			}
 		}
 	})
-	m.Run()
-
+	RunMartini(m)
 }
