@@ -88,13 +88,16 @@ func (h *Hub) run() {
 }
 
 func NewHub() *Hub {
+	server := eventsource.NewServer()
+	server.AllowCORS = true
+
 	h := Hub{
 		Data:       make(map[string][]string),
 		Users:      make(map[string]string),
 		register:   make(chan Connection, 0),
 		unregister: make(chan string, 0),
 		messages:   make(chan goredis.Message, 0),
-		srv:        eventsource.NewServer(),
+		srv:        server,
 	}
 	// We use the second redis database for the pub/sub
 	h.client.Db = 2
