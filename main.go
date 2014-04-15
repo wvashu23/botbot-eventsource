@@ -158,6 +158,6 @@ func main() {
 		log.Fatal("SSE_HOST is not set, example: SSE_HOST=localhost:3000")
 	}
 
-	log.Println("listening on " + sseUrl.Host)
-	log.Fatalln(http.ListenAndServe(sseUrl.Host, m))
+	log.Println("listening on " + sseString)
+	log.Fatalln(http.ListenAndServe(sseString, m))
 }
