@@ -153,13 +153,9 @@ func main() {
 		}
 	})
 
-	sseString := os.Getenv("SSE_ENDPOINT_URL")
+	sseString := os.Getenv("SSE_HOST")
 	if sseString == "" {
-		log.Fatal("SSE_URL is not set, example: SSE_URL=http://localhost:3000/")
-	}
-	sseUrl, err := nurl.Parse(sseString)
-	if err != nil {
-		log.Fatal("Could not read SSE string", err)
+		log.Fatal("SSE_HOST is not set, example: SSE_HOST=localhost:3000")
 	}
 
 	log.Println("listening on " + sseUrl.Host)
