@@ -16,22 +16,30 @@ import (
 	"github.com/monnand/goredis"
 )
 
+// Message is the bit of information that is transfered via eventsource
 type Message struct {
 	Idx           string
 	Channel, Html string
 }
 
-func (c *Message) Id() string    { return c.Idx }
+// Id is required to implement the eventsource.Event interface
+func (c *Message) Id() string { return c.Idx }
+
+// Event is required to implement the eventsource.Event interface
 func (c *Message) Event() string { return c.Channel }
+
+// Data is required to implement the eventsource.Event interface
 func (c *Message) Data() string {
 	return c.Html
 }
 
+// Connection is use to relate a user token to a channel
 type Connection struct {
 	token   string
 	channel string
 }
 
+// Hub maintains the states
 type Hub struct {
 	Data       map[string][]string // Key is the channel, value is a slice of token
 	Users      map[string]string   // Key is the token, value is a channel
@@ -93,6 +101,7 @@ func (h *Hub) run() {
 	}
 }
 
+// NewHub a pointer to an initialized Hub
 func NewHub() *Hub {
 	redisUrlString := os.Getenv("REDIS_SSEQUEUE_URL")
 	if redisUrlString == "" {
@@ -103,7 +112,7 @@ func NewHub() *Hub {
 		log.Fatal("Could not read Redis string", err)
 	}
 
-	redis_db, err := strconv.Atoi(strings.TrimLeft(redisUrl.Path, "/"))
+	redisDb, err := strconv.Atoi(strings.TrimLeft(redisUrl.Path, "/"))
 	if err != nil {
 		log.Fatal("Could not read Redis path", err)
 	}
@@ -118,7 +127,7 @@ func NewHub() *Hub {
 		unregister: make(chan string, 0),
 		messages:   make(chan goredis.Message, 0),
 		srv:        server,
-		client:     goredis.Client{Addr: redisUrl.Host, Db: redis_db},
+		client:     goredis.Client{Addr: redisUrl.Host, Db: redisDb},
 	}
 	// We use the second redis database for the pub/sub
 	//h.client.Db = 2
@@ -136,7 +145,7 @@ func main() {
 		token := params["token"]
 
 		if h.userExists(token) {
-			// TODO proper resonse
+			// TODO proper response
 			fmt.Fprintf(w, "Not allowed -- User already connected")
 		} else {
 			fmt.Println("Exchange token against the channel")
@@ -157,11 +166,11 @@ func main() {
 	if sseString == "" {
 		log.Fatal("SSE_URL is not set, example: SSE_URL=http://localhost:3000/")
 	}
-	sseUrl, err := nurl.Parse(sseString)
+	sseURL, err := nurl.Parse(sseString)
 	if err != nil {
 		log.Fatal("Could not read SSE string", err)
 	}
 
-	log.Println("listening on " + sseUrl.Host)
-	log.Fatalln(http.ListenAndServe(sseUrl.Host, m))
+	log.Println("listening on " + sseURL.Host)
+	log.Fatalln(http.ListenAndServe(sseURL.Host, m))
 }
