@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"expvar"
 	"log"
 	"net/http"
 	nurl "net/url"
@@ -16,6 +17,12 @@ import (
 const (
 	// ssePath is the PATH for the eventsource handler is going to be mounted on
 	ssePath = "/push/"
+)
+
+var (
+	numRegisterUsers   = expvar.NewInt("num_register_users")
+	numUnregisterUsers = expvar.NewInt("num_unregister_users")
+	numMessages        = expvar.NewInt("num_messages")
 )
 
 // Message is the bit of information that is transfered via eventsource
@@ -72,6 +79,7 @@ func (h *Hub) run() {
 			log.Println("[Info] register user: ", conn.token)
 			h.Users[conn.token] = conn.channel
 			h.Data[conn.channel] = append(h.Data[conn.channel], conn.token)
+			numRegisterUsers.Add(1)
 
 		case token := <-h.unregister:
 			log.Println("[Info] Unregister user: ", token)
@@ -80,6 +88,7 @@ func (h *Hub) run() {
 				delete(h.Users, token)
 				delete(h.Data, ch)
 			}
+			numUnregisterUsers.Add(1)
 
 		case msg := <-h.messages:
 			err := json.Unmarshal(msg.Message, &payload)
@@ -93,9 +102,10 @@ func (h *Hub) run() {
 			}
 			val, ok := h.Data[msg.Channel]
 			if ok && len(val) >= 1 {
-				log.Println("[Info] msg sent to tokens", val)
+				//log.Println("[Debug] msg sent to tokens", val)
 				h.srv.Publish(val, message)
 			}
+			numMessages.Add(1)
 		}
 	}
 }
