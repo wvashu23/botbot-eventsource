@@ -2,24 +2,26 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	nurl "net/url"
 	"os"
 	"strconv"
 	"strings"
-	// "reflect"
 
-	"github.com/codegangsta/martini"
 	"github.com/donovanhide/eventsource"
 	"github.com/monnand/goredis"
+)
+
+const (
+	// ssePath is the PATH for the eventsource handler is going to be mounted on
+	ssePath = "/push/"
 )
 
 // Message is the bit of information that is transfered via eventsource
 type Message struct {
 	Idx           string
-	Channel, Html string
+	Channel, HTML string
 }
 
 // Id is required to implement the eventsource.Event interface
@@ -30,7 +32,7 @@ func (c *Message) Event() string { return c.Channel }
 
 // Data is required to implement the eventsource.Event interface
 func (c *Message) Data() string {
-	return c.Html
+	return c.HTML
 }
 
 // Connection is use to relate a user token to a channel
@@ -56,7 +58,7 @@ func (h *Hub) userExists(token string) bool {
 }
 
 func (h *Hub) run() {
-	fmt.Println("Start the Hub")
+	log.Println("[Info] Start the Hub")
 	var payload [3]string
 	psub := make(chan string, 0)
 	go h.client.Subscribe(nil, nil, psub, nil, h.messages)
@@ -67,15 +69,12 @@ func (h *Hub) run() {
 	for {
 		select {
 		case conn := <-h.register:
-			fmt.Println("register user: ", conn.token)
-			// TODO try to get the channel
+			log.Println("[Info] register user: ", conn.token)
 			h.Users[conn.token] = conn.channel
-			//fmt.Println("[DEBUG] After h.Users assignment", h.Users[conn.token])
 			h.Data[conn.channel] = append(h.Data[conn.channel], conn.token)
-			//fmt.Println("[DEBUG] After h.Data assignment", h.Data[conn.channel])
 
 		case token := <-h.unregister:
-			fmt.Println("unregister user: ", token)
+			log.Println("[Info] Unregister user: ", token)
 			ch, ok := h.Users[token]
 			if ok {
 				delete(h.Users, token)
@@ -85,16 +84,16 @@ func (h *Hub) run() {
 		case msg := <-h.messages:
 			err := json.Unmarshal(msg.Message, &payload)
 			if err != nil {
-				fmt.Println("[Error] An error occured while Unmarshalling the msg: ", msg)
+				log.Println("[Error] An error occured while Unmarshalling the msg: ", msg)
 			}
 			message := &Message{
 				Idx:     payload[2],
 				Channel: payload[0],
-				Html:    payload[1],
+				HTML:    payload[1],
 			}
 			val, ok := h.Data[msg.Channel]
 			if ok && len(val) >= 1 {
-				fmt.Println("[DEBUG] msg sent to tokens", val)
+				log.Println("[Info] msg sent to tokens", val)
 				h.srv.Publish(val, message)
 			}
 		}
@@ -103,18 +102,20 @@ func (h *Hub) run() {
 
 // NewHub a pointer to an initialized Hub
 func NewHub() *Hub {
-	redisUrlString := os.Getenv("REDIS_SSEQUEUE_URL")
-	if redisUrlString == "" {
-		redisUrlString = "redis://localhost:6379/2"
+	redisURLString := os.Getenv("REDIS_SSEQUEUE_URL")
+	if redisURLString == "" {
+		// Use db 2 by default for  pub/sub
+		redisURLString = "redis://localhost:6379/2"
 	}
-	redisUrl, err := nurl.Parse(redisUrlString)
+	log.Println("[Info] Redis configuration used for pub/sub", redisURLString)
+	redisURL, err := nurl.Parse(redisURLString)
 	if err != nil {
 		log.Fatal("Could not read Redis string", err)
 	}
 
-	redisDb, err := strconv.Atoi(strings.TrimLeft(redisUrl.Path, "/"))
+	redisDb, err := strconv.Atoi(strings.TrimLeft(redisURL.Path, "/"))
 	if err != nil {
-		log.Fatal("Could not read Redis path", err)
+		log.Fatal("[Error] Could not read Redis path", err)
 	}
 
 	server := eventsource.NewServer()
@@ -127,33 +128,38 @@ func NewHub() *Hub {
 		unregister: make(chan string, 0),
 		messages:   make(chan goredis.Message, 0),
 		srv:        server,
-		client:     goredis.Client{Addr: redisUrl.Host, Db: redisDb},
+		client:     goredis.Client{Addr: redisURL.Host, Db: redisDb},
 	}
-	// We use the second redis database for the pub/sub
-	//h.client.Db = 2
 	return &h
 }
 
 func main() {
+	sseString := os.Getenv("SSE_HOST")
+	if sseString == "" {
+		log.Fatal("SSE_HOST is not set, example: SSE_HOST=localhost:3000")
+	}
+	log.Println("[Info] botbot-eventsource is listening on " + sseString)
+
+	log.Println("[Info] Starting the eventsource Hub")
 	h := NewHub()
 	go h.run()
 
-	m := martini.Classic()
-
 	// eventsource endpoints
-	m.Get("/push/:token", func(w http.ResponseWriter, req *http.Request, params martini.Params) {
-		token := params["token"]
+	http.HandleFunc(ssePath, func(w http.ResponseWriter, req *http.Request) {
+		token := req.URL.Path[len(ssePath):]
 
 		if h.userExists(token) {
-			// TODO proper response
-			fmt.Fprintf(w, "Not allowed -- User already connected")
+			log.Println("[Info] Forbiden, user already connected")
+			http.Error(w, "Forbiden", http.StatusForbidden)
 		} else {
-			fmt.Println("Exchange token against the channel")
-			ch, err := h.client.Getset(token, []byte{})
+			log.Println("[Info] Exchange token against the channel list")
+			val, err := h.client.Getset(token, []byte{})
 			if err != nil {
-				fmt.Fprintf(w, "Not allowed -- Error occured while exchanging the token")
-			} else {
-				h.register <- Connection{token, string(ch)}
+				log.Println("[Error] occured while exchanging the your security token.")
+				http.Error(w, "Error occured while exchanging the your security token", http.StatusUnauthorized)
+			} else if chanName := string(val); chanName != "" {
+				log.Println("[Info] Connecting", token, "to the channel", chanName)
+				h.register <- Connection{token, chanName}
 				defer func(u string) {
 					h.unregister <- u
 				}(token)
@@ -162,11 +168,5 @@ func main() {
 		}
 	})
 
-	sseString := os.Getenv("SSE_HOST")
-	if sseString == "" {
-		log.Fatal("SSE_HOST is not set, example: SSE_HOST=localhost:3000")
-	}
-
-	log.Println("listening on " + sseString)
-	log.Fatalln(http.ListenAndServe(sseString, m))
+	log.Fatalln(http.ListenAndServe(sseString, nil))
 }
