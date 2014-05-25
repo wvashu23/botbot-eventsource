@@ -110,7 +110,35 @@ func (h *Hub) run() {
 	}
 }
 
-// NewHub a pointer to an initialized Hub
+// EventSourceHandler implements the Handler interface
+func (h *Hub) EventSourceHandler(w http.ResponseWriter, req *http.Request) {
+	token := req.URL.Path[len(ssePath):]
+
+	if h.userExists(token) {
+		log.Println("[Info] Forbiden, user already connected")
+		http.Error(w, "Forbiden", http.StatusForbidden)
+	} else {
+		log.Println("[Info] Exchange token against the channel list", token)
+		val, err := h.client.Getset(token, []byte{})
+		if err != nil {
+			log.Println("[Error] occured while exchanging the your security token.", token, ":", err)
+			http.Error(w, "Error occured while exchanging the your security token", http.StatusUnauthorized)
+		} else if chanName := string(val); chanName != "" {
+			log.Println("[Info] Connecting", token, "to the channel", chanName)
+			h.register <- Connection{token, chanName}
+			defer func(u string) {
+				h.unregister <- u
+			}(token)
+			h.srv.Handler(token)(w, req)
+		}
+		_, err = h.client.Del(token)
+		if err != nil {
+			log.Println("[Error] An error occured while trying to delete the token from redis", err)
+		}
+	}
+}
+
+// NewHub returns a pointer to a initialized and running Hub
 func NewHub() *Hub {
 	redisURLString := os.Getenv("REDIS_SSEQUEUE_URL")
 	if redisURLString == "" {
@@ -140,6 +168,7 @@ func NewHub() *Hub {
 		srv:        server,
 		client:     goredis.Client{Addr: redisURL.Host, Db: redisDb},
 	}
+	go h.run()
 	return &h
 }
 
@@ -152,31 +181,9 @@ func main() {
 
 	log.Println("[Info] Starting the eventsource Hub")
 	h := NewHub()
-	go h.run()
 
 	// eventsource endpoints
-	http.HandleFunc(ssePath, func(w http.ResponseWriter, req *http.Request) {
-		token := req.URL.Path[len(ssePath):]
-
-		if h.userExists(token) {
-			log.Println("[Info] Forbiden, user already connected")
-			http.Error(w, "Forbiden", http.StatusForbidden)
-		} else {
-			log.Println("[Info] Exchange token against the channel list")
-			val, err := h.client.Getset(token, []byte{})
-			if err != nil {
-				log.Println("[Error] occured while exchanging the your security token.")
-				http.Error(w, "Error occured while exchanging the your security token", http.StatusUnauthorized)
-			} else if chanName := string(val); chanName != "" {
-				log.Println("[Info] Connecting", token, "to the channel", chanName)
-				h.register <- Connection{token, chanName}
-				defer func(u string) {
-					h.unregister <- u
-				}(token)
-				h.srv.Handler(token)(w, req)
-			}
-		}
-	})
+	http.HandleFunc(ssePath, h.EventSourceHandler)
 
 	log.Fatalln(http.ListenAndServe(sseString, nil))
 }
