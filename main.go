@@ -9,9 +9,13 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"net"
+	"flag"
+	"reflect"
 
 	"github.com/donovanhide/eventsource"
 	"github.com/monnand/goredis"
+	"github.com/fiorix/freegeoip"
 )
 
 const (
@@ -48,6 +52,12 @@ type Connection struct {
 	channel string
 }
 
+type Location struct {
+	Latitude float64
+	Longitude float64
+	timezone  string
+}
+
 // Hub maintains the states
 type Hub struct {
 	Data       map[string][]string // Key is the channel, value is a slice of token
@@ -57,6 +67,7 @@ type Hub struct {
 	messages   chan goredis.Message
 	srv        *eventsource.Server
 	client     goredis.Client
+	ipdb      *freegeoip.DB
 }
 
 func (h *Hub) userExists(token string) bool {
@@ -66,7 +77,7 @@ func (h *Hub) userExists(token string) bool {
 
 func (h *Hub) run() {
 	log.Println("[Info] Start the Hub")
-	var payload [3]string
+	var payload [4]string
 	psub := make(chan string, 0)
 	go h.client.Subscribe(nil, nil, psub, nil, h.messages)
 
@@ -100,11 +111,38 @@ func (h *Hub) run() {
 				Channel: payload[0],
 				HTML:    payload[1],
 			}
+
 			val, ok := h.Data[msg.Channel]
 			if ok && len(val) >= 1 {
-				//log.Println("[Debug] msg sent to tokens", val)
+				//log.Println("[Debug] Publishing message", message)
 				h.srv.Publish(val, message)
 			}
+			if payload[3] != "" {
+				if h.ipdb != nil {
+					var result map[string]interface{}
+					err = h.ipdb.Lookup(net.ParseIP(payload[3]), &result)
+					if err != nil {
+						log.Println(err)
+					} else {
+						location := reflect.ValueOf(result["location"])
+						lat := location.Interface().(map[string]interface{})["latitude"]
+						lon := location.Interface().(map[string]interface{})["longitude"]
+
+						val, _ := json.Marshal([]float64{reflect.ValueOf(lat).Interface().(float64),
+							                             reflect.ValueOf(lon).Interface().(float64),})
+						message2 := &Message{
+							Idx:     payload[2],
+							Channel: "loc",
+							HTML:     string(val),
+						}
+
+						//log.Println("[Debug] Sending ip to glob ", message2)
+						h.srv.Publish([]string{"glob"}, message2)
+					}
+				}
+
+			}
+
 			numMessages.Add(1)
 		}
 	}
@@ -114,32 +152,66 @@ func (h *Hub) run() {
 func (h *Hub) EventSourceHandler(w http.ResponseWriter, req *http.Request) {
 	token := req.URL.Path[len(ssePath):]
 
-	if h.userExists(token) {
-		log.Println("[Info] Forbiden, user already connected")
-		http.Error(w, "Forbiden", http.StatusForbidden)
-	} else {
-		log.Println("[Info] Exchange token against the channel list", token)
-		val, err := h.client.Getset(token, []byte{})
-		if err != nil {
-			log.Println("[Error] occured while exchanging the your security token.", token, ":", err)
-			http.Error(w, "Error occured while exchanging the your security token", http.StatusUnauthorized)
-		} else if chanName := string(val); chanName != "" {
-			log.Println("[Info] Connecting", token, "to the channel", chanName)
-			h.register <- Connection{token, chanName}
-			defer func(u string) {
-				h.unregister <- u
-			}(token)
-			h.srv.Handler(token)(w, req)
-		}
-		_, err = h.client.Del(token)
-		if err != nil {
-			log.Println("[Error] An error occured while trying to delete the token from redis", err)
+	// The reserved name "glob" is accepted as a global channel that just sends stats
+	if token == "glob"{
+		log.Println("[Info] Connecting to the global channel")
+		h.register <- Connection{"_", "glob"} // TODO: Need to come up with random, unique user ids
+		defer func(u string) {
+			h.unregister <- u
+		}("_")
+		h.srv.Handler(token)(w, req)
+
+	} else{
+		if h.userExists(token) {
+			log.Println("[Info] Forbiden, user already connected")
+			http.Error(w, "Forbiden", http.StatusForbidden)
+		} else {
+			log.Println("[Info] Exchange token against the channel list", token)
+			val, err := h.client.Getset(token, []byte{})
+			if err != nil {
+				log.Println("[Error] occured while exchanging the your security token.", token, ":", err)
+				http.Error(w, "Error occured while exchanging the your security token", http.StatusUnauthorized)
+
+			} else if chanName := string(val); chanName != "" {
+				log.Println("[Info] Connecting", token, "to the channel", chanName)
+				h.register <- Connection{token, chanName}
+				defer func(u string) {
+					h.unregister <- u
+				}(token)
+				h.srv.Handler(token)(w, req)
+			}
+			_, err = h.client.Del(token)
+			if err != nil {
+				log.Println("[Error] An error occured while trying to delete the token from redis", err)
+			}
 		}
 	}
 }
 
+
 // NewHub returns a pointer to a initialized and running Hub
 func NewHub() *Hub {
+	// Handle the flags. TODO: add flags for redis
+	var dbPath string
+	flag.StringVar(&dbPath, "ipdb-path", os.Getenv("IPDB_PATH"),
+		"The path to the ip->location DB")
+	flag.Parse()
+
+	// Initialze the hub
+	log.Println("[Info] Starting the eventsource Hub")
+
+	var db *freegeoip.DB
+	var err error
+	if dbPath != "" {
+		log.Println("[Info] Using ip->location DB ", dbPath)
+		db, err = freegeoip.Open(dbPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+	} else {
+		log.Println("[Info] No ip->location DB provided")
+	}
+
 	redisURLString := os.Getenv("REDIS_SSEQUEUE_URL")
 	if redisURLString == "" {
 		// Use db 2 by default for  pub/sub
@@ -167,22 +239,24 @@ func NewHub() *Hub {
 		messages:   make(chan goredis.Message, 0),
 		srv:        server,
 		client:     goredis.Client{Addr: redisURL.Host, Db: redisDb},
+		ipdb:       db,
 	}
+
+
 	go h.run()
 	return &h
 }
 
 func main() {
 	sseString := os.Getenv("SSE_HOST")
+
 	if sseString == "" {
 		log.Fatal("SSE_HOST is not set, example: SSE_HOST=localhost:3000")
 	}
-	log.Println("[Info] botbot-eventsource is listening on " + sseString)
-
-	log.Println("[Info] Starting the eventsource Hub")
 	h := NewHub()
 
 	// eventsource endpoints
+	log.Println("[Info] botbot-eventsource is listening on " + sseString)
 	http.HandleFunc(ssePath, h.EventSourceHandler)
 
 	log.Fatalln(http.ListenAndServe(sseString, nil))
