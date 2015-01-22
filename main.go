@@ -117,10 +117,13 @@ func (h *Hub) run() {
 				//log.Println("[Debug] Publishing message", message)
 				h.srv.Publish(val, message)
 			}
-			if payload[3] != "" {
-				if h.ipdb != nil {
+
+			if h.ipdb != nil {
+				// lookup the host
+				ips, err := net.LookupIP(payload[3])
+				if err != nil || len(ips) > 0 {
 					var result map[string]interface{}
-					err = h.ipdb.Lookup(net.ParseIP(payload[3]), &result)
+					err = h.ipdb.Lookup(ips[0], &result)
 					if err != nil {
 						log.Println(err)
 					} else {
@@ -139,8 +142,9 @@ func (h *Hub) run() {
 						//log.Println("[Debug] Sending ip to glob ", message2)
 						h.srv.Publish([]string{"glob"}, message2)
 					}
+				} else{
+					log.Println("[Error] Cannot resolve", payload[3], err)
 				}
-
 			}
 
 			numMessages.Add(1)
