@@ -143,7 +143,7 @@ func (h *Hub) run() {
 						h.srv.Publish([]string{"glob"}, message2)
 					}
 				} else {
-					log.Println("[Error] Cannot resolve", payload[3], err)
+					log.Println("[Error] Cannot resolve host :'", payload[3], "'. ", err)
 				}
 			}
 
