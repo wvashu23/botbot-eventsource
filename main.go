@@ -3,19 +3,19 @@ package main
 import (
 	"encoding/json"
 	"expvar"
+	"flag"
 	"log"
+	"net"
 	"net/http"
 	nurl "net/url"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
-	"net"
-	"flag"
-	"reflect"
 
 	"github.com/donovanhide/eventsource"
-	"github.com/monnand/goredis"
 	"github.com/fiorix/freegeoip"
+	"github.com/monnand/goredis"
 )
 
 const (
@@ -53,7 +53,7 @@ type Connection struct {
 }
 
 type Location struct {
-	Latitude float64
+	Latitude  float64
 	Longitude float64
 	timezone  string
 }
@@ -67,7 +67,7 @@ type Hub struct {
 	messages   chan goredis.Message
 	srv        *eventsource.Server
 	client     goredis.Client
-	ipdb      *freegeoip.DB
+	ipdb       *freegeoip.DB
 }
 
 func (h *Hub) userExists(token string) bool {
@@ -132,17 +132,17 @@ func (h *Hub) run() {
 						lon := location.Interface().(map[string]interface{})["longitude"]
 
 						val, _ := json.Marshal([]float64{reflect.ValueOf(lat).Interface().(float64),
-							                             reflect.ValueOf(lon).Interface().(float64),})
+							reflect.ValueOf(lon).Interface().(float64)})
 						message2 := &Message{
 							Idx:     payload[2],
 							Channel: "loc",
-							HTML:     string(val),
+							HTML:    string(val),
 						}
 
 						//log.Println("[Debug] Sending ip to glob ", message2)
 						h.srv.Publish([]string{"glob"}, message2)
 					}
-				} else{
+				} else {
 					log.Println("[Error] Cannot resolve", payload[3], err)
 				}
 			}
@@ -157,7 +157,7 @@ func (h *Hub) EventSourceHandler(w http.ResponseWriter, req *http.Request) {
 	token := req.URL.Path[len(ssePath):]
 
 	// The reserved name "glob" is accepted as a global channel that just sends stats
-	if token == "glob"{
+	if token == "glob" {
 		log.Println("[Info] Connecting to the global channel")
 		h.register <- Connection{"_", "glob"} // TODO: Need to come up with random, unique user ids
 		defer func(u string) {
@@ -165,7 +165,7 @@ func (h *Hub) EventSourceHandler(w http.ResponseWriter, req *http.Request) {
 		}("_")
 		h.srv.Handler(token)(w, req)
 
-	} else{
+	} else {
 		if h.userExists(token) {
 			log.Println("[Info] Forbiden, user already connected")
 			http.Error(w, "Forbiden", http.StatusForbidden)
@@ -191,7 +191,6 @@ func (h *Hub) EventSourceHandler(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 }
-
 
 // NewHub returns a pointer to a initialized and running Hub
 func NewHub() *Hub {
@@ -245,7 +244,6 @@ func NewHub() *Hub {
 		client:     goredis.Client{Addr: redisURL.Host, Db: redisDb},
 		ipdb:       db,
 	}
-
 
 	go h.run()
 	return &h
