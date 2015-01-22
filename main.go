@@ -121,7 +121,7 @@ func (h *Hub) run() {
 			if h.ipdb != nil {
 				// lookup the host
 				ips, err := net.LookupIP(payload[3])
-				if err != nil || len(ips) > 0 {
+				if err == nil && len(ips) > 0 {
 					var result map[string]interface{}
 					err = h.ipdb.Lookup(ips[0], &result)
 					if err != nil {
