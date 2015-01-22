@@ -118,9 +118,13 @@ func (h *Hub) run() {
 				h.srv.Publish(val, message)
 			}
 
+			log.Println("[Debug] Message received", payload)
+			log.Println("[Debug] ipdb", h.ipdb)
+
 			if h.ipdb != nil {
 				// lookup the host
 				ips, err := net.LookupIP(payload[3])
+				log.Println("[Debug] ips:", ips, "err:", err)
 				if err == nil && len(ips) > 0 {
 					var result map[string]interface{}
 					err = h.ipdb.Lookup(ips[0], &result)
@@ -139,7 +143,7 @@ func (h *Hub) run() {
 							HTML:    string(val),
 						}
 
-						//log.Println("[Debug] Sending ip to glob ", message2)
+						log.Println("[Debug] Sending ip to glob ", message2)
 						h.srv.Publish([]string{"glob"}, message2)
 					}
 				} else {
